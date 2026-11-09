@@ -395,16 +395,32 @@ pub fn indicator_alpha(since: f64) -> f32 {
 /// `viewport` points showing `total` points at `offset`, or `None` when
 /// everything fits.
 pub fn indicator_span(viewport: Points, total: Points, offset: Points) -> Option<(Points, Points)> {
-    span(viewport.0, total.0, offset.0).map(|(start, len)| (Points(start), Points(len)))
+    indicator_span_inset(viewport, total, offset, Points::ZERO, Points::ZERO)
 }
 
-fn span(viewport: f32, total: f32, offset: f32) -> Option<(f32, f32)> {
+/// [`indicator_span`] on a track that leaves `before` and `after` points
+/// of the viewport's ends out (`scrollbarInset` along the axis).
+pub fn indicator_span_inset(
+    viewport: Points,
+    total: Points,
+    offset: Points,
+    before: Points,
+    after: Points,
+) -> Option<(Points, Points)> {
+    span(viewport.0, total.0, offset.0, before.0, after.0)
+        .map(|(start, len)| (Points(start), Points(len)))
+}
+
+/// The indicator's `(start, length)`; the track is the viewport less
+/// `before` and `after`, and the length its share of it.
+fn span(viewport: f32, total: f32, offset: f32, before: f32, after: f32) -> Option<(f32, f32)> {
     /// Short enough to see where it is in long lists, long enough to see.
     const MIN_LENGTH: f32 = 32.0;
-    if total <= viewport + 0.5 || viewport <= 4.0 * INDICATOR_MARGIN {
+    let room = viewport - before.max(0.0) - after.max(0.0);
+    if total <= viewport + 0.5 || room <= 4.0 * INDICATOR_MARGIN {
         return None;
     }
-    let track = viewport - 2.0 * INDICATOR_MARGIN;
+    let track = room - 2.0 * INDICATOR_MARGIN;
     let max = total - viewport;
     // Overscrolling shrinks it, as on iOS.
     let over = if offset < 0.0 {
@@ -414,7 +430,7 @@ fn span(viewport: f32, total: f32, offset: f32) -> Option<(f32, f32)> {
     };
     let len = (track * viewport / total - over).max(MIN_LENGTH).min(track);
     let t = (offset / max).clamp(0.0, 1.0);
-    Some((INDICATOR_MARGIN + (track - len) * t, len))
+    Some((before.max(0.0) + INDICATOR_MARGIN + (track - len) * t, len))
 }
 
 /// How far the offset moves when the thumb moves by `d`: the thumb's
@@ -769,16 +785,19 @@ impl ScrollState {
                 self.y.0,
             )
         };
-        let (start, len) = span(dim, total, offset)?;
+        let (before, after) = self.scrollbar_ends();
+        let (before, after) = (before.0, after.0);
+        let (start, len) = span(dim, total, offset, before, after)?;
+        let bar = self.behavior.scrollbar_inset;
         let (x, y, rw, rh) = if self.horizontal {
             let x = if self.mirrored {
                 w - start - len
             } else {
                 start
             };
-            (x, bottom - thick - EDGE, len, thick)
+            (x, bottom - thick - EDGE - bar.bottom.0, len, thick)
         } else {
-            (right - thick - EDGE, start, thick, len)
+            (right - thick - EDGE - bar.right.0, start, thick, len)
         };
         let rect = Bounds {
             origin: point(Points(x), Points(y)),
@@ -787,7 +806,21 @@ impl ScrollState {
                 height: Points(rh),
             },
         };
-        Some((rect, dim - 2.0 * INDICATOR_MARGIN - len))
+        Some((
+            rect,
+            dim - before.max(0.0) - after.max(0.0) - 2.0 * INDICATOR_MARGIN - len,
+        ))
+    }
+
+    /// The points `scrollbarInset` leaves out of the track at its start and
+    /// its end, along the axis (a mirrored bar starts at the right).
+    pub fn scrollbar_ends(&self) -> (Points, Points) {
+        let bar = self.behavior.scrollbar_inset;
+        match (self.horizontal, self.mirrored) {
+            (false, _) => (bar.top, bar.bottom),
+            (true, false) => (bar.left, bar.right),
+            (true, true) => (bar.right, bar.left),
+        }
     }
 
     /// Whether a mouse press `at` a point (view coordinates) in a view of
@@ -823,10 +856,23 @@ impl ScrollState {
         let Some((right, bottom)) = Self::visible_edges(size, visible) else {
             return false;
         };
+        let bar = self.behavior.scrollbar_inset;
         let (along, across, start, len, edge) = if self.horizontal {
-            (x, y, rect.origin.x.0, rect.size.width.0, bottom)
+            (
+                x,
+                y,
+                rect.origin.x.0,
+                rect.size.width.0,
+                bottom - bar.bottom.0,
+            )
         } else {
-            (y, x, rect.origin.y.0, rect.size.height.0, right)
+            (
+                y,
+                x,
+                rect.origin.y.0,
+                rect.size.height.0,
+                right - bar.right.0,
+            )
         };
         (edge - THUMB_GRAB..=edge).contains(&across)
             && (start - THUMB_SLOP..=start + len + THUMB_SLOP).contains(&along)
@@ -2261,13 +2307,13 @@ mod tests {
 
     #[test]
     fn indicator_geometry() {
-        assert_eq!(span(400.0, 400.0, 0.0), None);
-        let (s0, l0) = span(400.0, 1600.0, 0.0).unwrap();
+        assert_eq!(span(400.0, 400.0, 0.0, 0.0, 0.0), None);
+        let (s0, l0) = span(400.0, 1600.0, 0.0, 0.0, 0.0).unwrap();
         assert_eq!(s0, 2.0);
         assert!((l0 - 99.0).abs() < 0.01);
-        let (s1, l1) = span(400.0, 1600.0, 1200.0).unwrap();
+        let (s1, l1) = span(400.0, 1600.0, 1200.0, 0.0, 0.0).unwrap();
         assert!((s1 + l1 - 398.0).abs() < 0.01);
-        let (_, l2) = span(400.0, 1600.0, -50.0).unwrap();
+        let (_, l2) = span(400.0, 1600.0, -50.0, 0.0, 0.0).unwrap();
         assert!(l2 < l0);
         assert_eq!(
             indicator_span(Points(400.0), Points(1600.0), Points(0.0)),
@@ -2275,6 +2321,21 @@ mod tests {
         );
         assert_eq!(indicator_alpha(0.0), 1.0);
         assert_eq!(indicator_alpha(INDICATOR_HOLD + INDICATOR_FADE), 0.0);
+    }
+
+    #[test]
+    fn scrollbar_inset_shortens_the_track() {
+        // 100 left out at the end: the indicator runs from 2 to 298.
+        let (s0, l0) = span(400.0, 1600.0, 0.0, 0.0, 100.0).unwrap();
+        assert_eq!(s0, 2.0);
+        assert!((l0 - 74.0).abs() < 0.01);
+        let (s1, l1) = span(400.0, 1600.0, 1200.0, 0.0, 100.0).unwrap();
+        assert!((s1 + l1 - 298.0).abs() < 0.01);
+        // And at the start: it starts past it.
+        let (s2, _) = span(400.0, 1600.0, 0.0, 50.0, 0.0).unwrap();
+        assert_eq!(s2, 52.0);
+        // No room left for a track: no indicator.
+        assert_eq!(span(400.0, 1600.0, 0.0, 200.0, 195.0), None);
     }
 
     #[test]
@@ -2377,11 +2438,11 @@ mod tests {
         // The thumb's travel spans the scroll range: moving it by its
         // whole travel scrolls to the end, and it ends that far along.
         let p = Points;
-        let (s0, l0) = span(400.0, 1600.0, 0.0).unwrap();
+        let (s0, l0) = span(400.0, 1600.0, 0.0, 0.0, 0.0).unwrap();
         let travel = 400.0 - 2.0 * INDICATOR_MARGIN - l0;
         let end = thumb_scroll(p(travel), p(1200.0), p(travel)).0;
         assert!((end - 1200.0).abs() < 0.01);
-        let (s1, _) = span(400.0, 1600.0, end).unwrap();
+        let (s1, _) = span(400.0, 1600.0, end, 0.0, 0.0).unwrap();
         assert!((s1 - s0 - travel).abs() < 0.01);
         assert!(thumb_scroll(p(-10.0), p(1200.0), p(travel)).0 < 0.0);
         assert_eq!(thumb_scroll(p(10.0), p(1200.0), p(0.0)), p(0.0));

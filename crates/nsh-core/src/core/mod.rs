@@ -5203,6 +5203,7 @@ impl<M: TextEngine> Core<M> {
                         ScrollProp::Deceleration(r) => b.deceleration = r,
                         ScrollProp::Bounces(on) => b.bounces = on,
                         ScrollProp::ContentInset(i) => b.content_inset = i,
+                        ScrollProp::ScrollbarInset(i) => b.scrollbar_inset = i,
                         ScrollProp::KeyboardTaps(t) => b.keyboard_taps = t,
                         ScrollProp::DisableIntervalMomentum(on) => b.one_step = on,
                         ScrollProp::MinZoom(v) => b.min_zoom = v.max(0.01),
