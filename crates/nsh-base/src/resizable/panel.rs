@@ -742,10 +742,14 @@ impl Model {
         let Some(drag) = &mut self.drag else {
             return;
         };
+        // What changed since the last move, not since the drag started: a
+        // panel dragged away and back to its first size (held at a limit)
+        // wants that size again.
+        let last = drag.state.sizes().to_vec();
         drag.state.resize_panel_at_handle(drag.ix, drag.from + by);
         let sizes = drag.state.sizes().to_vec();
-        let (before, flexible) = (drag.before.clone(), drag.flexible);
-        for ((&id, &now), &was) in self.ids.iter().zip(&sizes).zip(&before) {
+        let flexible = drag.flexible;
+        for ((&id, &now), &was) in self.ids.iter().zip(&sizes).zip(&last) {
             if now == was || Some(id) == flexible {
                 continue;
             }
@@ -838,5 +842,64 @@ impl PanelFlex {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nsh_core::geometry::{point, px, size};
+
+    use super::*;
+
+    /// A sidebar at its minimum, 220 (to 420), beside a panel without a size, laid
+    /// out in a group 800 wide.
+    fn sidebar_and_main() -> Model {
+        let mut model = Model::default();
+        let sidebar = PanelProps {
+            size: Some(px(220.0)),
+            min: px(220.0),
+            max: Some(px(420.0)),
+            fixed: false,
+            visible: true,
+        };
+        let main = PanelProps {
+            size: None,
+            min: px(360.0),
+            ..sidebar.clone()
+        };
+        model.register(0, sidebar, Rc::new(|_| {}));
+        model.register(1, main, Rc::new(|_| {}));
+        model.set_container(Bounds::new(
+            point(px(0.0), px(0.0)),
+            size(px(800.0), px(100.0)),
+        ));
+        laid_out(&mut model, &[220.0, 580.0]);
+        model
+    }
+
+    /// The panels laid out at `sizes`, as a frame does.
+    fn laid_out(model: &mut Model, sizes: &[f32]) {
+        let mut at = 0.0;
+        for (id, &len) in sizes.iter().enumerate() {
+            let frame = Bounds::new(point(px(at), px(0.0)), size(px(len), px(100.0)));
+            model.set_frame(id as u64, frame);
+            at += len;
+        }
+    }
+
+    #[test]
+    fn a_drag_back_to_where_it_started_lays_the_panel_out_there() {
+        let mut model = sidebar_and_main();
+        model.start_drag(0);
+        // Out to its maximum, and laid out there mid-drag...
+        model.drag(px(400.0));
+        laid_out(&mut model, &[420.0, 380.0]);
+        // ...then back past its minimum, where it started.
+        model.drag(px(-400.0));
+        model.end_drag();
+        // The drag ended at 220: the panel is laid out there, as the
+        // handle is.
+        assert_eq!(model.flex(0).basis, Some(px(220.0)));
+        assert_eq!(model.current_sizes().unwrap()[0], px(220.0));
     }
 }
