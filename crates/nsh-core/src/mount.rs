@@ -198,6 +198,9 @@ pub struct ScrollBehavior {
     pub bounces: bool,
     /// Room around the content.
     pub content_inset: EdgeInsets,
+    /// Room between the viewport's edges and the indicator's track: along
+    /// the axis it shortens the track, across it moves the indicator in.
+    pub scrollbar_inset: EdgeInsets,
     /// Whether taps dismiss the keyboard.
     pub keyboard_taps: KeyboardTaps,
     /// A fling moves one snap point at most (`disableIntervalMomentum`).
@@ -237,6 +240,7 @@ impl Default for ScrollBehavior {
             enabled: true,
             bounces: true,
             content_inset: EdgeInsets::default(),
+            scrollbar_inset: EdgeInsets::default(),
             keyboard_taps: KeyboardTaps::Never,
             one_step: false,
             min_zoom: 1.0,
